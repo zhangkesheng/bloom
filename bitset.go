@@ -1,4 +1,4 @@
-package bloom
+package server
 
 import (
 	"github.com/willf/bitset"

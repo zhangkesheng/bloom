@@ -1,45 +1,45 @@
-package bloom
+package server
 
 import (
 	"fmt"
-	"github.com/garyburd/redigo/redis"
-	"strings"
+	"time"
 )
 
-const redisMaxLength = 8 * 512 * 1024 * 1024
+const redisMaxLength = 512 * 1024 * 1024
 
-type Connection interface {
-	Do(cmd string, args ...interface{}) (reply interface{}, err error)
-	Send(cmd string, args ...interface{}) error
-	Flush() error
+type Client interface {
+	Set(key string, offset uint, value int) error
+	Get(key string, offset uint) (int, error)
+	Delete(keys ...string) error
+	Expire(key string, duration time.Duration) error
 }
 
 type RedisBitSet struct {
 	keyPrefix string
-	conn      Connection
+	cli       Client
 	m         uint
 }
 
-func NewRedisBitSet(keyPrefix string, m uint, conn Connection) *RedisBitSet {
+func NewRedisBitSet(keyPrefix string, m uint, conn Client) *RedisBitSet {
 	return &RedisBitSet{keyPrefix, conn, m}
 }
 
 func (r *RedisBitSet) Set(offsets []uint) error {
 	for _, offset := range offsets {
 		key, thisOffset := r.getKeyOffset(offset)
-		err := r.conn.Send("SETBIT", key, thisOffset, 1)
+		err := r.cli.Set(key, thisOffset, 1)
 		if err != nil {
 			return err
 		}
 	}
 
-	return r.conn.Flush()
+	return nil
 }
 
 func (r *RedisBitSet) Test(offsets []uint) (bool, error) {
 	for _, offset := range offsets {
 		key, thisOffset := r.getKeyOffset(offset)
-		bitValue, err := redis.Int(r.conn.Do("GETBIT", key, thisOffset))
+		bitValue, err := r.cli.Get(key, thisOffset)
 		if err != nil {
 			return false, err
 		}
@@ -51,17 +51,17 @@ func (r *RedisBitSet) Test(offsets []uint) (bool, error) {
 	return true, nil
 }
 
-func (r *RedisBitSet) Expire(seconds uint) error {
+func (r *RedisBitSet) Expire(duration time.Duration) error {
 	n := uint(0)
 	for n <= uint(r.m/redisMaxLength) {
 		key := fmt.Sprintf("%s:%d", r.keyPrefix, n)
 		n = n + 1
-		err := r.conn.Send("EXPIRE", key, seconds)
+		err := r.cli.Expire(key, duration)
 		if err != nil {
 			return err
 		}
 	}
-	return r.conn.Flush()
+	return nil
 }
 
 func (r *RedisBitSet) Delete() error {
@@ -72,8 +72,7 @@ func (r *RedisBitSet) Delete() error {
 		keys = append(keys, key)
 		n = n + 1
 	}
-	_, err := r.conn.Do("DEL", strings.Join(keys, " "))
-	return err
+	return r.cli.Delete(keys...)
 }
 
 func (r *RedisBitSet) getKeyOffset(offset uint) (string, uint) {

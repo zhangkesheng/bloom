@@ -1,14 +1,50 @@
-package bloom_test
+package server
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"encoding/binary"
+
 	"github.com/alicebob/miniredis"
-	"github.com/bculberson/bloom"
-	"github.com/garyburd/redigo/redis"
 )
+
+type TestClient struct {
+	mem map[string][]int
+}
+
+func NewTestClient() Client {
+	return &TestClient{
+		mem: map[string][]int{},
+	}
+}
+
+func (r *TestClient) Set(key string, offset uint, value int) error {
+	if r.mem[key] == nil {
+		r.mem[key] = make([]int, math.MaxInt16)
+	}
+	r.mem[key][offset] = value
+	return nil
+}
+
+func (r *TestClient) Get(key string, offset uint) (int, error) {
+	if r.mem[key] == nil {
+		return 0, nil
+	}
+	return r.mem[key][offset], nil
+}
+
+func (r *TestClient) Delete(keys ...string) error {
+	for _, key := range keys {
+		delete(r.mem, key)
+	}
+	return nil
+}
+
+func (r *TestClient) Expire(key string, duration time.Duration) error {
+	return nil
+}
 
 func TestRedisBloomFilter(t *testing.T) {
 	s, err := miniredis.Run()
@@ -17,31 +53,23 @@ func TestRedisBloomFilter(t *testing.T) {
 	}
 	defer s.Close()
 
-	pool := &redis.Pool{
-		MaxIdle:     3,
-		IdleTimeout: 240 * time.Second,
-		Dial:        func() (redis.Conn, error) { return redis.Dial("tcp", s.Addr()) },
-	}
-	conn := pool.Get()
-	defer conn.Close()
-
-	m, k := bloom.EstimateParameters(1000, .01)
-	bitSet := bloom.NewRedisBitSet("test_key", m, conn)
-	b := bloom.New(m, k, bitSet)
+	m, k := EstimateParameters(1000, .01)
+	bitSet := NewRedisBitSet("test_key", m, NewTestClient())
+	b := New(m, k, bitSet)
 	testBloomFilter(t, b)
 }
 
 func TestBloomFilter(t *testing.T) {
-	m, k := bloom.EstimateParameters(1000, .01)
-	b := bloom.New(m, k, bloom.NewBitSet(m))
+	m, k := EstimateParameters(1000, .01)
+	b := New(m, k, NewBitSet(m))
 	testBloomFilter(t, b)
 }
 
 func TestCollision(t *testing.T) {
 	n := uint(10000)
 	fp := .01
-	m, k := bloom.EstimateParameters(n, fp)
-	b := bloom.New(m, k, bloom.NewBitSet(m))
+	m, k := EstimateParameters(n, fp)
+	b := New(m, k, NewBitSet(m))
 	shouldNotExist := 0
 	for i := uint(0); i < n; i++ {
 		data := make([]byte, 4)
@@ -70,7 +98,7 @@ func TestCollision(t *testing.T) {
 	}
 }
 
-func testBloomFilter(t *testing.T, b *bloom.BloomFilter) {
+func testBloomFilter(t *testing.T, b *BloomFilter) {
 	data := []byte("some key")
 	existsBefore, err := b.Exists(data)
 	if err != nil {
