@@ -1,4 +1,4 @@
-module server
+module bloom
 
 go 1.13
 
