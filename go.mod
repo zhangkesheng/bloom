@@ -1,4 +1,4 @@
-module bloom
+module github.com/zhangkesheng/bloom
 
 go 1.13
 
